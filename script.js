@@ -1,8 +1,9 @@
+```js
 // script.js
 let employees = [];
 let stations = [];
 let prefs = { shiftHours: 8, peoplePerStation: 1, days: 7 };
-let unavailabilities = {}; // { "Alice": ["2025-02-03", "2025-02-10"] }
+let unavailabilities = {}; // { "Alice": [{from: "2025-02-03T00:00:00Z", to: "2025-02-10T23:59:59Z"}] }
 let currentEmp = null;
 
 const db = window.db;
@@ -218,18 +219,16 @@ const startTimeInput = document.getElementById('startTime').value || "08:00";
 
 let scheduleStart = new Date();
 if (startDateInput) {
-  scheduleStart = new Date(startDateInput);
+  // Parse dd/mm/yyyy safely
+  const [dd, mm, yyyy] = startDateInput.split('/').map(Number);
+  scheduleStart = new Date(yyyy, mm - 1, dd);  // months 0-based
 }
 if (startTimeInput) {
   const [hours, minutes] = startTimeInput.split(':').map(Number);
   scheduleStart.setHours(hours, minutes, 0, 0);
 } else {
-  // fallback - start at 08:00 if no time given
   scheduleStart.setHours(8, 0, 0, 0);
 }
-
-// Make sure we start at midnight for clean day calculation if needed
-// but keep the exact hour for first shift
 scheduleStart.setSeconds(0, 0);
 
 if (employees.length === 0 || stations.length === 0 || prefs.days < 1) {
@@ -258,16 +257,19 @@ const startMinOfDay = scheduleStart.getHours() * 60 + scheduleStart.getMinutes()
 
 const slotStartsMin = [];
 let currentMin = startMinOfDay;
+const slotsPerDay = Math.floor(minutesInDay / shiftDurationMin);  // e.g., 3 for 8h
 for (let i = 0; i < slotsPerDay; i++) {
   slotStartsMin.push(currentMin % minutesInDay);
   currentMin += shiftDurationMin;
 }
 
-// Then in the loop, use minutes instead of hours for accuracy:
+// Generation loop
 for (let day = 0; day < prefs.days; day++) {
   const dayStart = new Date(scheduleStart);
   dayStart.setDate(dayStart.getDate() + day);
-  dayStart.setHours(0, 0, 0, 0); // reset to midnight for clean day base
+  dayStart.setHours(0, 0, 0, 0); // midnight base for day
+
+  const dateStr = dayStart.toISOString().split('T')[0];
 
   for (const minOfDay of slotStartsMin) {
     const slotStartTime = new Date(dayStart);
@@ -276,27 +278,16 @@ for (let day = 0; day < prefs.days; day++) {
     const slotEndTime = new Date(slotStartTime);
     slotEndTime.setMinutes(slotStartTime.getMinutes() + shiftDurationMin);
 
-    // slotKey uses full time (HHMM)
     const sh = slotStartTime.getHours().toString().padStart(2, '0');
     const sm = slotStartTime.getMinutes().toString().padStart(2, '0');
-    const slotKey = `${dayStart.toISOString().split('T')[0]}_${sh}${sm}`;
+    const slotKey = `${dateStr}_${sh}${sm}`;
 
     schedule[slotKey] = {};
-
-    // ... rest of station loop ...
-  }
-}   // ← Initialize the object for this slot/time
-
-    // Optional safety (prevents rare edge-case crashes)
-    if (!schedule[slotKey]) {
-      schedule[slotKey] = {};
-    }
 
     for (const station of stations) {
       const assigned = [];
 
       let candidates = employees.filter(emp => {
-        // Not unavailable in this slot
         const unavailableRanges = unavailabilities[emp] || [];
         const overlaps = unavailableRanges.some(r => {
           const rFrom = new Date(r.from);
@@ -304,8 +295,6 @@ for (let day = 0; day < prefs.days; day++) {
           return !(slotEndTime <= rFrom || slotStartTime >= rTo);
         });
         if (overlaps) return false;
-
-        // Rested enough
         return slotStartTime >= restedUntil[emp];
       });
 
@@ -317,14 +306,13 @@ for (let day = 0; day < prefs.days; day++) {
           assigned.push("?");
           continue;
         }
-
         const chosen = candidates.shift();
         assigned.push(chosen);
         shiftCounts[chosen]++;
         restedUntil[chosen] = new Date(slotEndTime);
       }
 
-      schedule[slotKey][station] = assigned;   // ← now safe
+      schedule[slotKey][station] = assigned;
     }
   }
 }
@@ -353,10 +341,15 @@ Object.keys(days).sort().forEach(date => {
   const table = document.createElement('table');
   table.className = 'min-w-full border-collapse mb-12';
 
-  const dateParts = date.split('-');
   const dateObj = new Date(date);
   const dayName = dateObj.toLocaleDateString('he-IL', {weekday: 'long'});
-  const dateHeb = `${dateParts[2].padStart(2,'0')}/${dateParts[1].padStart(2,'0')}/${dateParts[0]}`;
+  const dd = dateObj.getDate().toString().padStart(2, '0');
+  const mm = (dateObj.getMonth() + 1).toString().padStart(2, '0');
+  const yyyy = dateObj.getFullYear();
+  const dateHeb = `${dd}/${mm}/${yyyy}`;
+
+  const caption = document.createElement('caption');
+  caption.className = 'text-2xl font-bold text-right mb-4 py-3 bg-blue-50 rounded';
   caption.textContent = `${dayName} ${dateHeb}`;
   table.appendChild(caption);
 
@@ -376,33 +369,38 @@ Object.keys(days).sort().forEach(date => {
   });
   table.appendChild(headerRow);
 
-  // Rows per slot
   slotKeysForDay.forEach(slotKey => {
     const [datePart, timePart] = slotKey.split('_');
-    const hour = parseInt(timePart.substring(0,2), 10);
-    const min  = parseInt(timePart.substring(2,4), 10) || 0;
+    const hh = timePart.substring(0, 2);
+    const mm = timePart.substring(2, 4) || '00';
 
-    // Re-create start time from slotKey
-    const slotStartTime = new Date(`${datePart}T${timePart.substring(0,2)}:${timePart.substring(2,4)}:00`);
+    const slotStartTime = new Date(`${datePart}T${hh}:${mm}:00`);
 
     const slotEndTime = new Date(slotStartTime);
-    slotEndTime.setHours(slotStartTime.getHours() + prefs.shiftHours);
+    slotEndTime.setMinutes(slotStartTime.getMinutes() + prefs.shiftHours * 60);
 
-    const startFormatted = slotStartTime.toLocaleTimeString('he-IL', {hour: '2-digit', minute: '2-digit', hour12: false});
-    const endFormatted   = slotEndTime.toLocaleTimeString('he-IL', {hour: '2-digit', minute: '2-digit', hour12: false});
-    const timeStr = `${startFormatted} – ${endFormatted}`;
+    const startFormatted = slotStartTime.toLocaleTimeString('he-IL', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false
+    });
+    const endFormatted = slotEndTime.toLocaleTimeString('he-IL', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false
+    });
 
     const row = document.createElement('tr');
 
     const timeCell = document.createElement('td');
     timeCell.className = 'border border-gray-300 p-4 font-medium sticky left-0 bg-white';
-    timeCell.dir = 'ltr';                     // force LTR for time
-    timeCell.style.textAlign = 'center';      // better visual
-    timeCell.textContent = `${startFormatted} – ${endFormatted}`;
+    timeCell.dir = 'ltr'; // Force LTR to prevent Safari reversal
+    timeCell.style.textAlign = 'center';
+    timeCell.innerHTML = `<span dir="ltr">${startFormatted} – ${endFormatted}</span>`;
     row.appendChild(timeCell);
 
     stations.forEach(station => {
-      const people = schedule[slotKey][station] || [];
+      const people = schedule[slotKey]?.[station] || [];
       const cell = document.createElement('td');
       cell.className = 'border border-gray-300 p-4 text-right';
 
@@ -426,35 +424,110 @@ Object.keys(days).sort().forEach(date => {
 });
 
 document.getElementById('exportBtn').classList.remove('hidden');
+}
+
+// ────────────────────────────────────────────────
+// Render one table per day
+// ────────────────────────────────────────────────
+
+const resultDiv = document.getElementById('result');
+resultDiv.innerHTML = '<h2 class="text-xl font-semibold mb-4">לוח משמרות</h2>';
+resultDiv.classList.remove('hidden');
+
+const allSlotKeys = Object.keys(schedule).sort();
+
+// Group by date
+const days = {};
+allSlotKeys.forEach(key => {
+  const date = key.split('_')[0];
+  if (!days[date]) days[date] = [];
+  days[date].push(key);
 });
 
-//Export CSV
-document.getElementById('exportBtn').addEventListener('click', () => {
-  const lines = ['Date,Time,Station,Assigned,Note'];
+Object.keys(days).sort().forEach(date => {
+  const slotKeysForDay = days[date];
 
-  Object.keys(schedule).sort().forEach(slotKey => {
-    const [date, hourStr] = slotKey.split('_');
+  const table = document.createElement('table');
+  table.className = 'min-w-full border-collapse mb-12';
+
+  const dateObj = new Date(date);
+  const dayName = dateObj.toLocaleDateString('he-IL', {weekday: 'long'});
+  const dateHeb = `${dateObj.getDate().toString().padStart(2, '0')}/${(dateObj.getMonth() + 1).toString().padStart(2, '0')}/${dateObj.getFullYear()}`;
+  caption.textContent = `${dayName} ${dateHeb}`;
+  table.appendChild(caption);
+
+  // Header row with station names
+  const headerRow = document.createElement('tr');
+  headerRow.className = 'bg-gray-100';
+  const timeHeader = document.createElement('th');
+  timeHeader.className = 'border p-3 text-left';
+  timeHeader.textContent = 'שעה';
+  headerRow.appendChild(timeHeader);
+
+  stations.forEach(station => {
+    const th = document.createElement('th');
+    th.className = 'border p-3 text-left';
+    th.textContent = station;
+    headerRow.appendChild(th);
+  });
+  table.appendChild(headerRow);
+
+  // One row per time slot
+  slotKeysForDay.forEach((slotKey, index) => {
+    const [_, hourStr] = slotKey.split('_');
     const hour = parseInt(hourStr, 10);
     const start = new Date(`${date}T${hourStr.padStart(2,'0')}:00:00`);
     const end = new Date(start);
     end.setHours(start.getHours() + prefs.shiftHours);
-    const timeStr = `${start.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}–${end.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}`;
 
-    Object.entries(schedule[slotKey]).forEach(([station, people]) => {
-      const note = violations.has(`${slotKey}_${station}`) ? 'Violation / Missing' : '';
-      lines.push(`${date},${timeStr},${station},"${people.join(' & ')}",${note}`);
+    const timeStr = `${start.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})} – ${end.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}`;
+
+    const row = document.createElement('tr');
+    if (index % 2 === 1) row.className = 'bg-gray-50';
+
+    const timeCell = document.createElement('td');
+    timeCell.className = 'border p-3';
+    timeCell.textContent = timeStr;
+    row.appendChild(timeCell);
+
+    stations.forEach(station => {
+      const people = schedule[slotKey][station] || [];
+      const cell = document.createElement('td');
+      cell.className = 'border p-3';
+
+      if (people.includes("?")) {
+        cell.textContent = 'חסר כוח אדם';
+        cell.className += ' text-red-600 font-medium';
+      } else {
+        cell.textContent = people.join(', ');
+        if (violations.has(`${slotKey}_${station}`)) {
+          cell.className += ' text-orange-600 font-medium';
+          cell.textContent += ' ⚠';
+        }
+      }
+      row.appendChild(cell);
     });
+
+    table.appendChild(row);
   });
 
-  const csv = lines.join('\n');
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  resultDiv.appendChild(table);
+});
+
+document.getElementById('exportBtn').classList.remove('hidden');
+}
+
+// Export CSV (stub for now)
+document.getElementById('exportBtn').addEventListener('click', () => {
+  const csv = 'Date,Station,Employees\nDay1,Placeholder,"Alice,Bob"';
+  const blob = new Blob([csv], { type: 'text/csv' });
   const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = `shift-schedule_${new Date().toISOString().slice(0,10)}.csv`;
-  link.click();
-  URL.revokeObjectURL(url);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'schedule.csv';
+  a.click();
 });
 
 // Initial load attempt
 updateUI();
+```
