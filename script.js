@@ -251,35 +251,41 @@ employees.forEach(emp => {
 
 const schedule = {};
 
-// Calculate slots
-const slotsPerDay = Math.floor(24 / prefs.shiftHours);
-const slotOffsets = Array.from({length: slotsPerDay}, (_, i) => i * prefs.shiftHours);
+// Calculate slots dynamically based on 24h cycle starting from given hour
+const shiftDurationMin = prefs.shiftHours * 60;
+const minutesInDay = 24 * 60;
+const startMinOfDay = scheduleStart.getHours() * 60 + scheduleStart.getMinutes();
 
+const slotStartsMin = [];
+let currentMin = startMinOfDay;
+for (let i = 0; i < slotsPerDay; i++) {
+  slotStartsMin.push(currentMin % minutesInDay);
+  currentMin += shiftDurationMin;
+}
+
+// Then in the loop, use minutes instead of hours for accuracy:
 for (let day = 0; day < prefs.days; day++) {
   const dayStart = new Date(scheduleStart);
   dayStart.setDate(dayStart.getDate() + day);
-  const dateStr = dayStart.toISOString().split('T')[0];
+  dayStart.setHours(0, 0, 0, 0); // reset to midnight for clean day base
 
-  for (const offset of slotOffsets) {
-    // Build slot start time
+  for (const minOfDay of slotStartsMin) {
     const slotStartTime = new Date(dayStart);
-    const baseHour = scheduleStart.getHours();
-    const baseMin = scheduleStart.getMinutes();
-    const totalMinutes = baseMin + offset * 60;
-    const extraHours = Math.floor(totalMinutes / 60);
-    const finalMin = totalMinutes % 60;
-    slotStartTime.setHours(baseHour + extraHours + offset, finalMin, 0, 0);
+    slotStartTime.setMinutes(minOfDay);
 
     const slotEndTime = new Date(slotStartTime);
-    slotEndTime.setHours(slotStartTime.getHours() + prefs.shiftHours);
+    slotEndTime.setMinutes(slotStartTime.getMinutes() + shiftDurationMin);
 
-    // Consistent key: always with minutes
-    const startHourStr = slotStartTime.getHours().toString().padStart(2, '0');
-    const startMinStr = slotStartTime.getMinutes().toString().padStart(2, '0');
-    const slotKey = `${dateStr}_${startHourStr}${startMinStr}`;
+    // slotKey uses full time (HHMM)
+    const sh = slotStartTime.getHours().toString().padStart(2, '0');
+    const sm = slotStartTime.getMinutes().toString().padStart(2, '0');
+    const slotKey = `${dayStart.toISOString().split('T')[0]}_${sh}${sm}`;
 
-    // ─── THIS IS THE MISSING PART ───
-    schedule[slotKey] = {};   // ← Initialize the object for this slot/time
+    schedule[slotKey] = {};
+
+    // ... rest of station loop ...
+  }
+}   // ← Initialize the object for this slot/time
 
     // Optional safety (prevents rare edge-case crashes)
     if (!schedule[slotKey]) {
@@ -347,11 +353,10 @@ Object.keys(days).sort().forEach(date => {
   const table = document.createElement('table');
   table.className = 'min-w-full border-collapse mb-12';
 
+  const dateParts = date.split('-');
   const dateObj = new Date(date);
   const dayName = dateObj.toLocaleDateString('he-IL', {weekday: 'long'});
-  const dateHeb = dateObj.toLocaleDateString('he-IL', {day: '2-digit', month: '2-digit', year: 'numeric'});
-  const caption = document.createElement('caption');
-  caption.className = 'text-2xl font-bold text-right mb-4 py-3 bg-blue-50 rounded';
+  const dateHeb = `${dateParts[2].padStart(2,'0')}/${dateParts[1].padStart(2,'0')}/${dateParts[0]}`;
   caption.textContent = `${dayName} ${dateHeb}`;
   table.appendChild(caption);
 
@@ -390,8 +395,10 @@ Object.keys(days).sort().forEach(date => {
     const row = document.createElement('tr');
 
     const timeCell = document.createElement('td');
-    timeCell.className = 'border border-gray-300 p-4 font-medium sticky left-0 bg-white text-left dir="ltr"';
-    timeCell.textContent = timeStr;
+    timeCell.className = 'border border-gray-300 p-4 font-medium sticky left-0 bg-white';
+    timeCell.dir = 'ltr';                     // force LTR for time
+    timeCell.style.textAlign = 'center';      // better visual
+    timeCell.textContent = `${startFormatted} – ${endFormatted}`;
     row.appendChild(timeCell);
 
     stations.forEach(station => {
