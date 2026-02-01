@@ -1,4 +1,3 @@
-```js
 // script.js
 let employees = [];
 let stations = [];
