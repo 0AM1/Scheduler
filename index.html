@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Shift Scheduler</title>
+
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Firebase SDKs (modular v9+) -->
+  <script type="module">
+    // Your Firebase config - REPLACE WITH YOUR OWN FROM FIREBASE CONSOLE
+    const firebaseConfig = {
+    apiKey: "AIzaSyAorOL6CWJRHsRH4nyBSd_Dpzt37v_J7nI",
+    authDomain: "scheduler-247.firebaseapp.com",
+    projectId: "scheduler-247",
+    storageBucket: "scheduler-247.firebasestorage.app",
+    messagingSenderId: "229703350607",
+    appId: "1:229703350607:web:d0365654b183ecd21a2d3a"
+    };
+
+    // Import Firebase
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+    import { getFirestore, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+
+    window.firebaseApp = initializeApp(firebaseConfig);
+    window.db = getFirestore(window.firebaseApp);
+    // Make Firebase functions globally available to regular <script> tags
+    window.db = db;
+    window.setDoc = setDoc;
+    window.getDoc = getDoc;
+    window.doc = doc;
+  </script>
+
+  <!-- Flatpickr for date picker (lightweight, no React needed) -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+  <script>
+  // Hebrew locale for Flatpickr (already have the link, just activate)
+  flatpickr.localize(flatpickr.l10ns.he);
+</script>
+
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="bg-gray-50 min-h-screen p-6 font-sans" dir="rtl">
+
+  <div class="max-w-7xl mx-auto">
+    <h1 class="text-4xl font-bold text-gray-800 mb-8 text-right">מתזמן משמרות</h1>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+      <!-- Column 1: Inputs + Preferences -->
+      <div class="space-y-6">
+        <section class="bg-white p-6 rounded-lg shadow">
+          <h2 class="text-xl font-semibold mb-4">עובדים ועמדות</h2>
+          <label class="block text-sm font-medium text-gray-700 mb-2">שמות העובדים (שורה לכל עובד)</label>
+          <textarea id="employees" rows="6" class="w-full border border-gray-300 rounded p-3 focus:ring-blue-500 focus:border-blue-500" placeholder="אלון&#10;דנה&#10;יוסי"></textarea>
+            <button id="savePermanent" class="mt-2 bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700">שמור רשימה קבועה</button>
+            <button id="loadPermanent" class="mt-2 bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700">טען רשימה קבועה</button>
+          <label class="block text-sm font-medium text-gray-700 mt-4 mb-2">עמדות (מופרדות בפסיק)</label>
+          <input id="stations" type="text" class="w-full border border-gray-300 rounded p-3 focus:ring-blue-500 focus:border-blue-500" placeholder="קופה, מחסן, ניקיון">
+
+          <button id="loadSaved" class="mt-4 bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700">טען שמורים</button>
+        </section>
+
+        <section class="bg-white p-6 rounded-lg shadow">
+          <h2 class="text-xl font-semibold mb-4">הגדרות</h2>
+          <div class="space-y-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700">תאריך התחלה</label>
+              <input id="startDate" type="text" class="w-full border border-gray-300 rounded p-3 mt-1" placeholder="בחר תאריך התחלה">
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-gray-700">שעת התחלה ראשונה</label>
+              <input id="startTime" type="time" class="w-full border border-gray-300 rounded p-3 mt-1" value="08:00">
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-gray-700">אורך משמרת (שעות)</label>
+              <select id="shiftHours" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm">
+                <option value="4">4</option>
+                <option value="6">6</option>
+                <option value="8" selected>8</option>
+              </select>
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-gray-700">אנשים לכל עמדה</label>
+              <input id="peoplePerStation" type="number" min="1" value="1" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm">
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-gray-700">מספר ימים</label>
+              <input id="days" type="number" min="1" max="31" value="7" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm">
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <!-- Column 2: Unavailabilities -->
+      <section class="bg-white p-6 rounded-lg shadow">
+  <h2 class="text-xl font-semibold mb-4">לא זמין</h2>
+  <select id="empSelect" class="mb-4 block w-full border-gray-300 rounded-md shadow-sm"></select>
+  
+  <div class="grid grid-cols-2 gap-4 mb-4">
+    <div>
+      <label class="block text-sm font-medium text-gray-700 mb-1">מתאריך/שעה</label>
+      <input id="fromPicker" type="text" placeholder="בחר התחלה" class="w-full border border-gray-300 rounded p-3">
+    </div>
+    <div>
+      <label class="block text-sm font-medium text-gray-700 mb-1">עד תאריך/שעה</label>
+      <input id="toPicker" type="text" placeholder="בחר סיום" class="w-full border border-gray-300 rounded p-3">
+    </div>
+  </div>
+  <button id="addUnavail" class="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700 mb-4">הוסף טווח</button>
+  
+  <ul id="unavailList" class="mt-4 text-sm list-disc pr-5 text-right"></ul>
+</section>
+
+      <!-- Column 3: Actions & Result -->
+      <div class="space-y-6">
+        <div class="flex gap-4">
+          <button id="generateBtn" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 px-6 rounded-lg shadow">צור לוח</button>
+          <button id="exportBtn" class="bg-green-600 hover:bg-green-700 text-white font-medium py-3 px-6 rounded-lg shadow hidden">ייצא לקובץ CSV</button>
+        </div>
+
+        <div id="result" class="bg-white rounded-lg shadow p-5 hidden">
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script type="module" src="script.js"></script>
+</body>
+</html>
